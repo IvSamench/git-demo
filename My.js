@@ -1,115 +1,128 @@
-export default {
-  id: 'rezka',
-  name: 'Rezka.ag',
+(function () {
+    function rezka2(component, _object) {
+        const network = new Lampa.Reguest();
+        const object = _object;
+        const select_title = object.search || object.movie.title;
+        const prefer_http = Lampa.Storage.field('online_mod_prefer_http') === true;
+        const prefer_mp4 = Lampa.Storage.field('online_mod_prefer_mp4') === true;
+        const proxy_mirror = Lampa.Storage.field('online_mod_proxy_rezka2_mirror') === true;
+        const prox = component.proxy('rezka2');
+        const host = prox && !proxy_mirror ? 'https://rezka.ag' : Utils.rezka2Mirror();
+        const ref = host + '/';
+        const user_agent = Utils.baseUserAgent();
+        const cookie = Lampa.Storage.get('online_mod_rezka2_cookie', '') || ('PHPSESSID=' + Utils.randomId(26));
+        const headers = {
+            'Origin': host,
+            'Referer': ref,
+            'User-Agent': user_agent,
+            'Cookie': cookie
+        };
 
-  manifest() {
-    return {
-      id: 'rezka',
-      name: 'Rezka.ag',
-      version: '1.0',
-      author: 'IvSamench',
-      description: 'Плагин для поиска и просмотра с Rezka.ag',
-      type: 'plugin',
-    };
-  },
+        const searchUrl = host + '/index.php?do=search&subaction=search&q=' + encodeURIComponent(select_title);
+        component.loading(true);
 
-  search(query) {
-    return fetch(`https://rezka.ag/api/v1/search/${encodeURIComponent(query)}/`, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0',
-        'Referer': 'https://rezka.ag/'
-      }
-    })
-    .then(res => res.json())
-    .then(data => {
-      if (!data.results || !data.results.length) return [];
-      return data.results.map(item => ({
-        title: item.title,
-        year: item.year,
-        url: `https://rezka.ag${item.url}`,
-        type: item.type,
-        poster: item.poster
-      }));
-    })
-    .catch(() => {
-      return [];
-    });
-  },
+        network.timeout(10000);
+        network.silent(component.proxyLink(searchUrl, prox), function (html) {
+            const items = parseSearchResults(html);
 
-  getList(item) {
-    return fetch(item.url, {
-      headers: {
-        'Referer': 'https://rezka.ag',
-        'User-Agent': 'Mozilla/5.0'
-      }
-    })
-    .then(res => res.text())
-    .then(html => {
-      const jsonMatch = html.match(/window\.__INITIAL_STATE__\s*=\s*(\{.+?\});/);
-      if (!jsonMatch) return [];
+            if (items.length === 1) {
+                getEpisodes(items[0].url, items[0].title);
+            } else {
+                items.forEach(c => c.is_similars = true);
+                component.similars(items);
+                component.loading(false);
+            }
+        }, function () {
+            component.emptyForQuery(select_title);
+        });
 
-      const data = JSON.parse(jsonMatch[1]);
-      const seasons = data.seasons || [];
-      const episodes = data.episodes || [];
-
-      if (seasons.length) {
-        return seasons.map(season => ({
-          title: `Сезон ${season.number}`,
-          url: item.url + `?season=${season.number}`,
-          season: season.number,
-          episodes: []
-        }));
-      } else if (episodes.length) {
-        return episodes.map(ep => ({
-          title: `Серия ${ep.number}`,
-          url: item.url + `?episode=${ep.number}`,
-          episode: ep.number
-        }));
-      } else {
-        return [];
-      }
-    })
-    .catch(() => {
-      return [];
-    });
-  },
-
-  getLink(item) {
-    return fetch(item.url, {
-      headers: {
-        'Referer': 'https://rezka.ag',
-        'User-Agent': 'Mozilla/5.0'
-      }
-    })
-    .then(res => res.text())
-    .then(html => {
-      const jsonMatch = html.match(/window\.__INITIAL_STATE__\s*=\s*(\{.+?\});/);
-      if (!jsonMatch) return Promise.reject('No video data found');
-
-      const data = JSON.parse(jsonMatch[1]);
-      const videos = data.player && data.player.videos;
-
-      if (!videos) return Promise.reject('No video streams found');
-
-      let bestStream = null;
-      let maxQuality = 0;
-
-      Object.keys(videos).forEach(key => {
-        const stream = videos[key];
-        if (stream && stream.url && stream.quality) {
-          const qualityNum = parseInt(stream.quality.replace(/\D/g, ''), 10);
-          if (qualityNum > maxQuality) {
-            maxQuality = qualityNum;
-            bestStream = stream.url;
-          }
+        function parseSearchResults(html) {
+            const data = [];
+            const matches = html.matchAll(/<div class="b-content__inline_item".*?href="(.*?)".*?<div class="title">([^<]+)<\/div>/gs);
+            for (const match of matches) {
+                data.push({ title: match[2].trim(), url: match[1].trim() });
+            }
+            return data;
         }
-      });
 
-      if (!bestStream) return Promise.reject('No suitable stream found');
+        function getEpisodes(url, title) {
+            network.timeout(10000);
+            network.silent(component.proxyLink(url, prox), function (html) {
+                const match = html.match(/data-player="([^"]+)"/);
+                if (!match) return component.empty('Не удалось найти embed');
 
-      return { url: bestStream, subtitles: data.player.subtitles || [] };
-    })
-    .catch(err => Promise.reject(err));
-  }
-};
+                const embedUrl = host + match[1];
+                network.silent(component.proxyLink(embedUrl, prox), function (html2) {
+                    const jsonMatch = html2.match(/var playerData\s*=\s*(\{.+?\});/s);
+                    if (!jsonMatch) return component.empty('Ошибка парсинга playerData');
+
+                    let data;
+                    try {
+                        data = JSON.parse(jsonMatch[1]);
+                    } catch (e) {
+                        return component.empty('Ошибка JSON');
+                    }
+
+                    const playlist = [];
+                    const viewed = Lampa.Storage.cache('online_view', 5000, []);
+                    const hash = Lampa.Utils.hash(object.movie.original_title);
+
+                    data.playlist.forEach(item => {
+                        const file = prefer_mp4 && item.mp4 ? item.mp4 : item.hls;
+                        if (!file) return;
+
+                        const stream = {
+                            title: item.title,
+                            timeline: {},
+                            quality: { 'auto': file },
+                            file: file,
+                            season: 1, // если не сериал — может быть 0
+                            episode: 1
+                        };
+                        playlist.push(stream);
+                    });
+
+                    component.reset();
+                    playlist.forEach(stream => {
+                        const item = Lampa.Template.get('online_mod', stream);
+                        item.on('hover:enter', () => {
+                            Lampa.Player.play({
+                                url: stream.file,
+                                quality: stream.quality,
+                                title: stream.title
+                            });
+                            if (viewed.indexOf(hash) === -1) {
+                                viewed.push(hash);
+                                Lampa.Storage.set('online_view', viewed);
+                            }
+                        });
+                        component.append(item);
+                    });
+
+                    component.start(true);
+                    component.loading(false);
+                }, () => component.empty('Ошибка embed'));
+            }, () => component.empty('Ошибка страницы фильма'));
+        }
+    }
+
+    const component = new Lampa.Component();
+
+    component.search = function (_object, _id) {
+        rezka2(component, _object);
+    };
+
+    component.start = function (first_select) {
+        if (first_select) Lampa.Controller.toggle('content');
+    };
+
+    component.render = function () {
+        return component.render();
+    };
+
+    component.destroy = function () {
+        // очистка, если надо
+    };
+
+    Lampa.Component.add('rezka', component);
+})();
