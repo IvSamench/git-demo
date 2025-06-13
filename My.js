@@ -135,5 +135,10 @@ component.destroy = function () {
 // Регистрация плагина
 Lampa.Component.add('rezka', component);
 
+Lampa.Source.add('rezka', {
+    name: 'HDRezka',
+    component: 'rezka'
+});
+
 })();
 
