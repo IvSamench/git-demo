@@ -1,128 +1,139 @@
-(function () {
-    function rezka2(component, _object) {
-        const network = new Lampa.Reguest();
-        const object = _object;
-        const select_title = object.search || object.movie.title;
-        const prefer_http = Lampa.Storage.field('online_mod_prefer_http') === true;
-        const prefer_mp4 = Lampa.Storage.field('online_mod_prefer_mp4') === true;
-        const proxy_mirror = Lampa.Storage.field('online_mod_proxy_rezka2_mirror') === true;
-        const prox = component.proxy('rezka2');
-        const host = prox && !proxy_mirror ? 'https://rezka.ag' : Utils.rezka2Mirror();
-        const ref = host + '/';
-        const user_agent = Utils.baseUserAgent();
-        const cookie = Lampa.Storage.get('online_mod_rezka2_cookie', '') || ('PHPSESSID=' + Utils.randomId(26));
-        const headers = {
-            'Origin': host,
-            'Referer': ref,
-            'User-Agent': user_agent,
-            'Cookie': cookie
-        };
+// ==UserScript== // @name         HDRezka Plugin for Lampa // @description  Плагин источника HDRezka (rezka.ag и зеркала) для Lampa без manifest.json // ==/UserScript==
 
-        const searchUrl = host + '/index.php?do=search&subaction=search&q=' + encodeURIComponent(select_title);
-        component.loading(true);
+(function () { 'use strict';
 
-        network.timeout(10000);
-        network.silent(component.proxyLink(searchUrl, prox), function (html) {
-            const items = parseSearchResults(html);
+const network = new Lampa.Reguest();
+const component = new Lampa.Component();
 
-            if (items.length === 1) {
-                getEpisodes(items[0].url, items[0].title);
-            } else {
-                items.forEach(c => c.is_similars = true);
-                component.similars(items);
-                component.loading(false);
+let object = {};
+let select_title = '';
+let viewed = Lampa.Storage.cache('online_view', 5000, []);
+
+function rezka2Mirror() {
+    let url = Lampa.Storage.get('online_mod_rezka2_mirror', '') + '';
+    if (!url) return 'https://rezka.ag';
+    if (url.indexOf('://') === -1) url = 'https://' + url;
+    if (url.charAt(url.length - 1) === '/') url = url.slice(0, -1);
+    return url;
+}
+
+function parseSearchResults(html) {
+    const items = [];
+    const regex = /<div class="b-content__inline_item.*?<a href="([^"]+)">.*?<div class="title">([^<]+)<\/div>/gs;
+    let match;
+    while ((match = regex.exec(html)) !== null) {
+        items.push({ title: match[2].trim(), url: match[1].trim() });
+    }
+    return items;
+}
+
+function extractPlayerData(html) {
+    const match = html.match(/var\s+playerData\s*=\s*(\{.+?\});/s);
+    if (!match) return null;
+    try {
+        return JSON.parse(match[1]);
+    } catch (e) {
+        return null;
+    }
+}
+
+function append(items) {
+    component.reset();
+    const hash = Lampa.Utils.hash(object.movie.original_title);
+
+    items.forEach(element => {
+        const item = Lampa.Template.get('online_mod', element);
+        item.append(Lampa.Timeline.render({}));
+
+        item.on('hover:enter', () => {
+            Lampa.Player.play({
+                url: element.file,
+                title: element.title,
+                quality: { 'auto': element.file }
+            });
+
+            if (!viewed.includes(hash)) {
+                viewed.push(hash);
+                item.append('<div class="torrent-item__viewed">' + Lampa.Template.get('icon_star', {}, true) + '</div>');
+                Lampa.Storage.set('online_view', viewed);
             }
-        }, function () {
-            component.emptyForQuery(select_title);
         });
 
-        function parseSearchResults(html) {
-            const data = [];
-            const matches = html.matchAll(/<div class="b-content__inline_item".*?href="(.*?)".*?<div class="title">([^<]+)<\/div>/gs);
-            for (const match of matches) {
-                data.push({ title: match[2].trim(), url: match[1].trim() });
-            }
-            return data;
+        component.append(item);
+    });
+
+    component.start(true);
+}
+
+function getEpisodes(page_url, title) {
+    const host = rezka2Mirror();
+    const prox = component.proxy('rezka2');
+
+    network.timeout(10000);
+    network.silent(component.proxyLink(page_url, prox), html => {
+        const embedMatch = html.match(/data-player="([^"]+)"/);
+        if (!embedMatch) return component.empty('Не найден embed');
+
+        const embedUrl = host + embedMatch[1];
+
+        network.silent(component.proxyLink(embedUrl, prox), html2 => {
+            const data = extractPlayerData(html2);
+            if (!data || !data.playlist) return component.empty('Ошибка playerData');
+
+            const playlist = data.playlist.map(item => ({
+                title: item.title || title,
+                file: item.hls || item.mp4,
+                quality: { 'auto': item.hls || item.mp4 }
+            }));
+
+            append(playlist);
+        }, () => component.empty('Ошибка загрузки embed'));
+    }, () => component.empty('Ошибка загрузки страницы'));
+}
+
+function search(_object) {
+    object = _object;
+    select_title = object.search || object.movie.title;
+    const host = rezka2Mirror();
+    const prox = component.proxy('rezka2');
+
+    const searchUrl = host + '/index.php?do=search&subaction=search&q=' + encodeURIComponent(select_title);
+
+    component.loading(true);
+    network.timeout(10000);
+    network.silent(component.proxyLink(searchUrl, prox), html => {
+        const items = parseSearchResults(html);
+        if (items.length === 1) {
+            getEpisodes(items[0].url, items[0].title);
+        } else if (items.length > 1) {
+            items.forEach(i => i.is_similars = true);
+            component.similars(items);
+            component.loading(false);
+        } else {
+            component.emptyForQuery(select_title);
         }
+    }, () => component.empty('Ошибка поиска'));
+}
 
-        function getEpisodes(url, title) {
-            network.timeout(10000);
-            network.silent(component.proxyLink(url, prox), function (html) {
-                const match = html.match(/data-player="([^"]+)"/);
-                if (!match) return component.empty('Не удалось найти embed');
+// Основные методы компонента
+component.search = function (_object, _id) {
+    search(_object);
+};
 
-                const embedUrl = host + match[1];
-                network.silent(component.proxyLink(embedUrl, prox), function (html2) {
-                    const jsonMatch = html2.match(/var playerData\s*=\s*(\{.+?\});/s);
-                    if (!jsonMatch) return component.empty('Ошибка парсинга playerData');
+component.start = function (first_select) {
+    if (first_select) Lampa.Controller.toggle('content');
+};
 
-                    let data;
-                    try {
-                        data = JSON.parse(jsonMatch[1]);
-                    } catch (e) {
-                        return component.empty('Ошибка JSON');
-                    }
+component.render = function () {
+    return component.render();
+};
 
-                    const playlist = [];
-                    const viewed = Lampa.Storage.cache('online_view', 5000, []);
-                    const hash = Lampa.Utils.hash(object.movie.original_title);
+component.destroy = function () {
+    network.clear();
+};
 
-                    data.playlist.forEach(item => {
-                        const file = prefer_mp4 && item.mp4 ? item.mp4 : item.hls;
-                        if (!file) return;
+// Регистрация плагина
+Lampa.Component.add('rezka', component);
 
-                        const stream = {
-                            title: item.title,
-                            timeline: {},
-                            quality: { 'auto': file },
-                            file: file,
-                            season: 1, // если не сериал — может быть 0
-                            episode: 1
-                        };
-                        playlist.push(stream);
-                    });
-
-                    component.reset();
-                    playlist.forEach(stream => {
-                        const item = Lampa.Template.get('online_mod', stream);
-                        item.on('hover:enter', () => {
-                            Lampa.Player.play({
-                                url: stream.file,
-                                quality: stream.quality,
-                                title: stream.title
-                            });
-                            if (viewed.indexOf(hash) === -1) {
-                                viewed.push(hash);
-                                Lampa.Storage.set('online_view', viewed);
-                            }
-                        });
-                        component.append(item);
-                    });
-
-                    component.start(true);
-                    component.loading(false);
-                }, () => component.empty('Ошибка embed'));
-            }, () => component.empty('Ошибка страницы фильма'));
-        }
-    }
-
-    const component = new Lampa.Component();
-
-    component.search = function (_object, _id) {
-        rezka2(component, _object);
-    };
-
-    component.start = function (first_select) {
-        if (first_select) Lampa.Controller.toggle('content');
-    };
-
-    component.render = function () {
-        return component.render();
-    };
-
-    component.destroy = function () {
-        // очистка, если надо
-    };
-
-    Lampa.Component.add('rezka', component);
 })();
+
