@@ -1,21 +1,21 @@
-// ==UserScript== // @name         HDRezka Plugin for Lampa // @description  Плагин источника HDRezka (rezka.ag и зеркала) для Lampa без manifest.json // ==/UserScript==
-
-(function () { 'use strict';
+(function waitForLampa() { if (typeof Lampa === 'undefined' || typeof Lampa.Component === 'undefined') { setTimeout(waitForLampa, 100); return; }
 
 const network = new Lampa.Reguest();
 const component = new Lampa.Component();
+const Storage = Lampa.Storage;
+const Utils = {
+    rezka2Mirror: function () {
+        let url = Storage.get('online_mod_rezka2_mirror', '') + '';
+        if (!url) return 'https://rezka.ag';
+        if (url.indexOf('://') === -1) url = 'https://' + url;
+        if (url.charAt(url.length - 1) === '/') url = url.slice(0, -1);
+        return url;
+    }
+};
 
 let object = {};
 let select_title = '';
-let viewed = Lampa.Storage.cache('online_view', 5000, []);
-
-function rezka2Mirror() {
-    let url = Lampa.Storage.get('online_mod_rezka2_mirror', '') + '';
-    if (!url) return 'https://rezka.ag';
-    if (url.indexOf('://') === -1) url = 'https://' + url;
-    if (url.charAt(url.length - 1) === '/') url = url.slice(0, -1);
-    return url;
-}
+let viewed = Storage.cache('online_view', 5000, []);
 
 function parseSearchResults(html) {
     const items = [];
@@ -55,7 +55,7 @@ function append(items) {
             if (!viewed.includes(hash)) {
                 viewed.push(hash);
                 item.append('<div class="torrent-item__viewed">' + Lampa.Template.get('icon_star', {}, true) + '</div>');
-                Lampa.Storage.set('online_view', viewed);
+                Storage.set('online_view', viewed);
             }
         });
 
@@ -66,7 +66,7 @@ function append(items) {
 }
 
 function getEpisodes(page_url, title) {
-    const host = rezka2Mirror();
+    const host = Utils.rezka2Mirror();
     const prox = component.proxy('rezka2');
 
     network.timeout(10000);
@@ -94,7 +94,7 @@ function getEpisodes(page_url, title) {
 function search(_object) {
     object = _object;
     select_title = object.search || object.movie.title;
-    const host = rezka2Mirror();
+    const host = Utils.rezka2Mirror();
     const prox = component.proxy('rezka2');
 
     const searchUrl = host + '/index.php?do=search&subaction=search&q=' + encodeURIComponent(select_title);
@@ -115,7 +115,6 @@ function search(_object) {
     }, () => component.empty('Ошибка поиска'));
 }
 
-// Основные методы компонента
 component.search = function (_object, _id) {
     search(_object);
 };
@@ -132,9 +131,7 @@ component.destroy = function () {
     network.clear();
 };
 
-// Регистрация плагина
 Lampa.Component.add('rezka', component);
-
 Lampa.Source.add('rezka', {
     name: 'HDRezka',
     component: 'rezka'
