@@ -1,0 +1,43 @@
+{
+    "name": "HDRezka Plugin",
+    "version": "1.0.0",
+    "description": "Плагин для просмотра контента с HDRezka.ag в Lampa медиаплеере",
+    "author": "HDRezka Parser Team",
+    "type": "plugin",
+    "main": "hdrezka_plugin.js",
+    "min_lampa_version": "1.5.0",
+    "permissions": [
+        "network",
+        "storage",
+        "player"
+    ],
+    "settings": {
+        "hdrezka_prefer_http": {
+            "type": "boolean",
+            "default": false,
+            "title": "Предпочитать HTTP",
+            "description": "Использовать HTTP вместо HTTPS для запросов"
+        },
+        "hdrezka_cache_time": {
+            "type": "number",
+            "default": 3600,
+            "title": "Время кэширования (секунды)",
+            "description": "Время хранения кэшированных данных"
+        }
+    },
+    "sources": [
+        {
+            "name": "HDRezka.ag",
+            "url": "https://rezka.ag",
+            "description": "Основной источник контента"
+        }
+    ],
+    "capabilities": [
+        "search",
+        "movie_info",
+        "tv_series",
+        "multiple_translations",
+        "quality_selection",
+        "subtitles"
+    ]
+}
